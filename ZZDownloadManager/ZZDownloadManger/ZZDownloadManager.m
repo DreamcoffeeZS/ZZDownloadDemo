@@ -1,4 +1,4 @@
- //
+//
 //  ZZDownloadManager.m
 //  ZZDownloadManager
 //
@@ -17,11 +17,14 @@
 @end
 
 
+
 @interface ZZDownloadModel()
 
 @end
 
+
 @interface ZZDownloadManager()<NSURLSessionDelegate>
+
 @property (nonatomic, strong) NSFileManager *fileManager;
 
 // Caches/ZZDownloadCache/
@@ -33,10 +36,9 @@
 //  Caches/ZZDownloadCache/FinishedPlist.plist
 @property (nonatomic, copy) NSString *finishedPlistFilePath;
 
-
-
-
 @end
+
+
 
 @implementation ZZDownloadManager
 
@@ -77,7 +79,7 @@
         con.timeoutIntervalForRequest = 10;
         con.sessionSendsLaunchEvents = YES;
         _session = [NSURLSession sessionWithConfiguration:con delegate:self delegateQueue:nil];
-
+        
         //查看是否有进行中的下载
         NSArray *tasks = [self sessionDownloadTasks];
         for (NSURLSessionDownloadTask *task in tasks) {
@@ -90,6 +92,244 @@
     return self;
 }
 
+
+
+#pragma mark - NSURLSessionTaskDelegate
+
+- (void)URLSessionDidFinishEventsForBackgroundURLSession:(NSURLSession *)session{
+    if (self.completionHandler) {
+        self.completionHandler();
+    }
+}
+
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task
+didCompleteWithError:(nullable NSError *)error{
+    NSLog(@"%s", __func__);
+    ZZDownloadModel *model = [self modelWithUrl:task.currentRequest.URL.absoluteString];
+    if (model == nil) {
+        return;
+    }
+    NSAssert(model != nil, @"model不能为nil");
+    NSData *resumeData = [error.userInfo objectForKey:NSURLSessionDownloadTaskResumeData];
+    if (resumeData) {//user 主动暂停了应用或者等待下载
+        if (model.state == ZZDownloadModelPauseState || model.state == ZZDownloadModelWillStartState) {
+            model.resumeData = resumeData;
+            [self saveDownloadInfo:model];
+        }else if(model.state == ZZDownloadModelRunningState){//如果是用户主动kill了应用，重启应用也可以在这里获取到resumedata
+            model.resumeData = resumeData;
+            [model resume];
+        }
+    }else{//下载完成或下载失败
+        [self.downloadModelList removeObject:model];
+        [self.downloadModelDic removeObjectForKey:model.url];
+        
+        NSString *path = [[self downloadFileDirectory ] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.plist", model.fileName]];
+        [_fileManager removeItemAtPath:path error:nil];
+        
+        @synchronized(self){
+            self.downloadingCount--;
+            for (ZZDownloadModel *model in self.downloadModelList) {
+                if (model.state == ZZDownloadModelWillStartState) {
+                    [model resume];
+                    self.downloadingCount++;
+                    break;
+                }
+            }
+        }
+        [model URLSession:session task:task didCompleteWithError:error];
+    }
+}
+
+
+
+
+
+#pragma mark - NSURLSessionDownloadDelegate
+
+/* Sent when a download task that has completed a download.  The delegate should
+ * copy or move the file at the given location to a new location as it will be
+ * removed when the delegate message returns. URLSession:task:didCompleteWithError: will
+ * still be called.
+ */
+- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask
+didFinishDownloadingToURL:(NSURL *)location{
+    NSLog(@"%s", __func__);
+    ZZDownloadModel *model = [self modelWithTask:downloadTask];
+    NSString *path = [[self fileCacheDirectory] stringByAppendingPathComponent:downloadTask.response.suggestedFilename];//[self fileCachePath:downloadTask.response.suggestedFilename] ;
+    [self.fileManager moveItemAtURL:location toURL:[NSURL fileURLWithPath:path] error:nil];
+    
+    ZZDownloadedFile * finish = [ZZDownloadedFile new];
+    finish.fileName = model.fileName;
+    finish.fileSize = model.progress.totalFileSize;
+    finish.filePath = path;
+    
+    [self.finishedlist addObject:finish];
+    [[ZZDownloadManager shareManager] saveFinishedFile];
+    [model URLSession:session downloadTask:downloadTask didFinishDownloadingToURL:location];
+}
+
+
+
+/* Sent periodicallt  o notify the delegate of download progress. */
+- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask
+      didWriteData:(int64_t)bytesWritten
+ totalBytesWritten:(int64_t)totalBytesWritten
+totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite{
+    NSLog(@"%s", __func__);
+    
+    ZZDownloadModel *model = [self modelWithTask:downloadTask];
+    [model URLSession:session downloadTask:downloadTask didWriteData:bytesWritten totalBytesWritten:totalBytesWritten totalBytesExpectedToWrite:totalBytesExpectedToWrite];
+}
+
+/* Sent when a download has been resumed. If a download failed with an
+ * error, the -userInfo dictionary of the error will contain an
+ * NSURLSessionDownloadTaskResumeData key, whose value is the resume
+ * data.
+ */
+
+- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask
+ didResumeAtOffset:(int64_t)fileOffset
+expectedTotalBytes:(int64_t)expectedTotalBytes{
+    ZZDownloadModel *model = [self modelWithTask:downloadTask];
+    [model URLSession:session downloadTask:downloadTask didResumeAtOffset:fileOffset expectedTotalBytes:expectedTotalBytes];
+    NSLog(@"%s", __func__);
+}
+
+
+
+#pragma mark - Public Methods
+
+- (BOOL)isInDownloadList:(NSString *)url{
+    return [self.downloadModelDic objectForKey:url];
+}
+
+- (ZZDownloadModel *)addDownloadModelWithURL:(NSString *)url{
+    BOOL isInitTask = YES;
+    if (self.downloadingCount == _maxCount)  {
+        isInitTask = NO;
+    }
+    
+    ZZDownloadModel *model = [[ZZDownloadModel alloc] initWithURL:url isInitTask:isInitTask] ;
+    
+    if (model) {
+        [_downloadModelList addObject:model];
+        [_downloadModelDic setObject:model forKey:url];
+        [self saveDownloadInfo:model];
+    }
+    if (self.downloadingCount == _maxCount) {
+        
+    }else{//没有达到最大下载数量就开始下载
+        [model resume];
+        self.downloadingCount++;
+    }
+    return model;
+}
+
+//ZZDownloadModelPauseState或者ZZDownloadModelWillStartState调用这个方法开启下载
+- (void)resumeDownload:(ZZDownloadModel *)model{
+    
+    int tem = 0;
+    for (ZZDownloadModel *aModel in _downloadModelList) {
+        if (aModel.state == ZZDownloadModelRunningState) {
+            tem++;
+            if (tem == _maxCount) {//
+                [aModel wait];
+                if (aModel.progressInfoBlock) {
+                    aModel.progressInfoBlock(aModel.progress);
+                }
+                self.downloadingCount--;
+                break;
+            }
+        }
+    }
+    [model resume];
+    
+    if (model.progressInfoBlock) {
+        model.progressInfoBlock(model.progress);
+    }
+    self.downloadingCount++;
+}
+
+- (void)pauseDownload:(ZZDownloadModel *)model{
+    [model pause];
+    if (model.progressInfoBlock) {
+        model.progressInfoBlock(model.progress);
+    }
+    self.downloadingCount--;
+    for (ZZDownloadModel *aModel  in _downloadModelList) {
+        if (aModel.state == ZZDownloadModelWillStartState) {
+            [aModel resume];
+            self.downloadingCount++;
+            if (model.progressInfoBlock) {
+                model.progressInfoBlock(model.progress);
+            }
+            break;
+        }
+    }
+}
+
+
+- (void)deleteDownload:(ZZDownloadModel *)model{
+    if (model.state == ZZDownloadModelRunningState) {
+        [model cancel];
+        [self.downloadModelList removeObject:model];
+        [self.downloadModelDic removeObjectForKey:model.url];
+        NSString *path = [[self downloadFileDirectory ] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.plist", model.fileName]];
+        [_fileManager removeItemAtPath:path error:nil];
+        
+        @synchronized(self){
+            self.downloadingCount--;
+            for (ZZDownloadModel *model in self.downloadModelList) {
+                if (model.state == ZZDownloadModelWillStartState) {
+                    [model resume];
+                    self.downloadingCount++;
+                    break;
+                }
+            }
+        }
+        
+    }else{
+        [self.downloadModelDic removeObjectForKey:model.url];
+        [self.downloadModelList removeObject:model];
+        
+        NSError *error;
+        BOOL s1 = [self.fileManager removeItemAtPath: [[self downloadFileDirectory ] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.plist", model.fileName]] error:&error];
+        if (s1) {
+            NSLog(@"s");
+            if(model.completeBlock){
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    model.completeBlock(nil);
+                });
+            }
+        }else{
+            NSLog(@"f");
+        }
+    }
+    if (model.url == nil) {
+        NSLog(@"aaaaaaaaaaa%@", model);
+    }
+    
+}
+
+- (void)deleteFinishFile:(ZZDownloadedFile *)model {
+    
+    [_finishedlist removeObject:model];
+    NSString *path = model.filePath;
+    NSError *error;
+    if ([self.fileManager fileExistsAtPath:path]) {
+        BOOL s = [self.fileManager removeItemAtPath:path error:&error];
+        NSAssert(s, @"删除失败");
+        
+        if (s) {
+            NSLog(@"删除成功");
+        }else{
+            NSLog(@"删除失败");
+        }
+    }
+    [self saveFinishedFile];
+}
+
+#pragma mark - private Methods
 - (NSMutableArray *)loadDownloadList{
     NSMutableArray *array = @[].mutableCopy;
     NSError *error;
@@ -122,87 +362,21 @@
     return array;
 }
 
-- (ZZDownloadModel *)downLoadingModelForURLString:(NSString *)URLString
-{
-    return [self.downloadModelDic objectForKey:URLString];
-}
-- (BOOL)isInDownloadList:(NSString *)url{
-    return [self.downloadModelDic objectForKey:url];
-}
-
-#pragma mark - get download model
-- (ZZDownloadModel *)downloadModelWithURL:(NSString *)url isInitTask:(BOOL)isInitTask{
-    ZZDownloadModel *model = [[ZZDownloadModel alloc] initWithURL:url isInitTask:isInitTask] ;
-    return model;
-}
-
-- (ZZDownloadModel *)addDownloadModelWithURL:(NSString *)url{
-    BOOL isInitTask = YES;
-    if (self.downloadingCount == _maxCount)  {
-        isInitTask = NO;
-    }
-    
-    ZZDownloadModel *model = [self downloadModelWithURL:url isInitTask:isInitTask ];
-    if (model) {
-        [_downloadModelList addObject:model];
-        [_downloadModelDic setObject:model forKey:url];
-        [self saveDownloadInfo:model];
-    }
-    if (self.downloadingCount == _maxCount) {
-        
-    }else{//没有达到最大下载数量就开始下载
-        [model resume];
-        self.downloadingCount++;
-    }
-    return model;
-}
-
-
-#pragma mark - NSURLSessionTaskDelegate
-- (void)URLSessionDidFinishEventsForBackgroundURLSession:(NSURLSession *)session{
-    if (self.completionHandler) {
-        self.completionHandler();
-    }
-}
-
-- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task
-didCompleteWithError:(nullable NSError *)error{
-    NSLog(@"%s", __func__);
-    ZZDownloadModel *model = [self modelWithUrl:task.currentRequest.URL.absoluteString];
-    if (model == nil) {
-        return;
-    }
-    NSAssert(model != nil, @"model不能为nil");
-    NSData *resumeData = [error.userInfo objectForKey:NSURLSessionDownloadTaskResumeData];
-    if (resumeData) {//user 主动暂停了应用或者等待下载
-        if (model.state == ZZDownloadModelPauseState || model.state == ZZDownloadModelWillStartState) {
-            model.resumeData = resumeData;
-            [self saveDownloadInfo:model];
-        }else if(model.state == ZZDownloadModelRunningState){//如果是用户主动kill了应用，重启应用也可以在这里获取到resumedata
-            model.resumeData = resumeData;
-            [model resume];
+// 获取所有的后台下载session
+- (NSArray *)sessionDownloadTasks {
+    __block NSArray *tasks = nil;
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);//使用信号量把异步变同步，是这个函数返回时tasks有值
+    [self.session getTasksWithCompletionHandler:^(NSArray *dataTasks, NSArray *uploadTasks, NSArray *downloadTasks) {
+        tasks = downloadTasks;
+        if (tasks.count > 0) {
+            NSURLSessionDownloadTask *task = tasks[0];
+            NSLog(@"aa");
         }
-    }else{//下载完成或下载失败
-        [self.downloadModelList removeObject:model];
-        [self.downloadModelDic removeObjectForKey:model.url];
-
-        NSString *path = [[self downloadFileDirectory ] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.plist", model.fileName]];
-        [_fileManager removeItemAtPath:path error:nil];
-        
-        @synchronized(self){
-            self.downloadingCount--;
-            for (ZZDownloadModel *model in self.downloadModelList) {
-                if (model.state == ZZDownloadModelWillStartState) {
-                    [model resume];
-                    self.downloadingCount++;
-                    break;
-                }
-            }
-        }
-        [model URLSession:session task:task didCompleteWithError:error];
-    }
+        dispatch_semaphore_signal(semaphore);
+    }];
+    dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+    return tasks;
 }
-
 
 - (ZZDownloadModel *)modelWithUrl:(NSString *)url{
     ZZDownloadModel *model = [self.downloadModelDic objectForKey:url];
@@ -218,137 +392,6 @@ didCompleteWithError:(nullable NSError *)error{
     return nil;
 }
 
-- (void)deleteFinishFile:(ZZDownloadedFile *)model
-{
-    
-    [_finishedlist removeObject:model];
-    NSString *path = model.filePath;
-    NSError *error;
-    if ([self.fileManager fileExistsAtPath:path]) {
-       BOOL s = [self.fileManager removeItemAtPath:path error:&error];
-        NSAssert(s, @"删除失败");
-
-        if (s) {
-            NSLog(@"删除成功");
-        }else{
-            NSLog(@"删除失败");
-        }
-    }
-    [self saveFinishedFile];
-}
-
-
-#pragma mark - NSURLSessionDownloadDelegate
-
-/* Sent when a download task that has completed a download.  The delegate should
- * copy or move the file at the given location to a new location as it will be
- * removed when the delegate message returns. URLSession:task:didCompleteWithError: will
- * still be called.
- */
-- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask
-didFinishDownloadingToURL:(NSURL *)location{
-    NSLog(@"%s", __func__);
-    ZZDownloadModel *model = [self modelWithTask:downloadTask];
-    NSString *path = [[self fileCacheDirectory] stringByAppendingPathComponent:downloadTask.response.suggestedFilename];//[self fileCachePath:downloadTask.response.suggestedFilename] ;
-    [self.fileManager moveItemAtURL:location toURL:[NSURL fileURLWithPath:path] error:nil];
-
-    ZZDownloadedFile * finish = [ZZDownloadedFile new];
-    finish.fileName = model.fileName;
-    finish.fileSize = model.progress.totalFileSize;
-    finish.filePath = path;
-    
-    [self.finishedlist addObject:finish];
-    [[ZZDownloadManager shareManager] saveFinishedFile];
-    [model URLSession:session downloadTask:downloadTask didFinishDownloadingToURL:location];
-}
-
-
-
-/* Sent periodicallt  o notify the delegate of download progress. */
-- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask
-      didWriteData:(int64_t)bytesWritten
- totalBytesWritten:(int64_t)totalBytesWritten
-totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite{
-    NSLog(@"%s", __func__);
-
-    ZZDownloadModel *model = [self modelWithTask:downloadTask];
-    [model URLSession:session downloadTask:downloadTask didWriteData:bytesWritten totalBytesWritten:totalBytesWritten totalBytesExpectedToWrite:totalBytesExpectedToWrite];
-}
-
-/* Sent when a download has been resumed. If a download failed with an
- * error, the -userInfo dictionary of the error will contain an
- * NSURLSessionDownloadTaskResumeData key, whose value is the resume
- * data.
- */
-
-- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask
- didResumeAtOffset:(int64_t)fileOffset
-expectedTotalBytes:(int64_t)expectedTotalBytes{
-    ZZDownloadModel *model = [self modelWithTask:downloadTask];
-    [model URLSession:session downloadTask:downloadTask didResumeAtOffset:fileOffset expectedTotalBytes:expectedTotalBytes];
-    NSLog(@"%s", __func__);
-}
-
-// 获取所有的后台下载session
-- (NSArray *)sessionDownloadTasks
-{
-    __block NSArray *tasks = nil;
-    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);//使用信号量把异步变同步，是这个函数返回时tasks有值
-    [self.session getTasksWithCompletionHandler:^(NSArray *dataTasks, NSArray *uploadTasks, NSArray *downloadTasks) {
-        tasks = downloadTasks;
-        if (tasks.count > 0) {
-            NSURLSessionDownloadTask *task = tasks[0];
-            NSLog(@"aa");
-        }
-        dispatch_semaphore_signal(semaphore);
-    }];
-    dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
-    return tasks;
-}
-
-
-- (void)pauseDownload:(ZZDownloadModel *)model{
-    [model pause];
-    if (model.progressInfoBlock) {
-        model.progressInfoBlock(model.progress);
-    }
-    self.downloadingCount--;
-    for (ZZDownloadModel *aModel  in _downloadModelList) {
-        if (aModel.state == ZZDownloadModelWillStartState) {
-            [aModel resume];
-            self.downloadingCount++;
-            if (model.progressInfoBlock) {
-                model.progressInfoBlock(model.progress);
-            }
-            break;
-        }
-    }
-}
-
-//ZZDownloadModelPauseState或者ZZDownloadModelWillStartState调用这个方法开启下载
-- (void)resumeDownload:(ZZDownloadModel *)model{
-    
-    int tem = 0;
-    for (ZZDownloadModel *aModel in _downloadModelList) {
-        if (aModel.state == ZZDownloadModelRunningState) {
-            tem++;
-            if (tem == _maxCount) {//
-                [aModel wait];
-                if (aModel.progressInfoBlock) {
-                    aModel.progressInfoBlock(aModel.progress);
-                }
-                self.downloadingCount--;
-                break;
-            }
-        }
-    }
-    [model resume];
-    
-    if (model.progressInfoBlock) {
-        model.progressInfoBlock(model.progress);
-    }
-    self.downloadingCount++;
-}
 
 #pragma mark - handle finish file
 
@@ -382,48 +425,6 @@ expectedTotalBytes:(int64_t)expectedTotalBytes{
 }
 
 
-
-- (void)deleteDownload:(ZZDownloadModel *)model{
-    if (model.state == ZZDownloadModelRunningState) {
-        [model cancel];
-        [self.downloadModelList removeObject:model];
-        [self.downloadModelDic removeObjectForKey:model.url];
-        NSString *path = [[self downloadFileDirectory ] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.plist", model.fileName]];
-        [_fileManager removeItemAtPath:path error:nil];
-        
-        @synchronized(self){
-            self.downloadingCount--;
-            for (ZZDownloadModel *model in self.downloadModelList) {
-                if (model.state == ZZDownloadModelWillStartState) {
-                    [model resume];
-                    self.downloadingCount++;
-                    break;
-                }
-            }
-        }
-
-    }else{
-        [self.downloadModelDic removeObjectForKey:model.url];
-        [self.downloadModelList removeObject:model];
-
-        NSError *error;
-        BOOL s1 = [self.fileManager removeItemAtPath: [[self downloadFileDirectory ] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.plist", model.fileName]] error:&error];
-        if (s1) {
-            NSLog(@"s");
-            if(model.completeBlock){
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    model.completeBlock(nil);
-                });
-            }
-        }else{
-            NSLog(@"f");
-        }
-    }
-    if (model.url == nil) {
-        NSLog(@"aaaaaaaaaaa%@", model);
-    }
-    
-}
 
 #pragma mark - File Manager
 
@@ -492,7 +493,7 @@ expectedTotalBytes:(int64_t)expectedTotalBytes{
     }
     
     [dic setObject:@(model.state) forKey:@"state"];
-
+    
     NSString *path = [[self downloadFileDirectory ] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.plist", model.fileName]];
     BOOL s = [dic writeToFile:path atomically:YES];
     NSAssert(s, @"写入失败");

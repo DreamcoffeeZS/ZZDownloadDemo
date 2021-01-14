@@ -35,7 +35,6 @@
 
 +(ZZDownloadManager *)shareManager;
 
-- (ZZDownloadModel *)addDownloadModelWithURL:(NSString *)url;
 
 - (void)saveDownloadInfo:(ZZDownloadModel *)model;
 
@@ -44,6 +43,7 @@
 - (BOOL)isInDownloadList:(NSString *)url;
 - (BOOL)isFinishedDownload:(NSString *)url;
 
+- (ZZDownloadModel *)addDownloadModelWithURL:(NSString *)url;
 
 - (void)deleteDownload:(ZZDownloadModel *)model;
 - (void)resumeDownload:(ZZDownloadModel *)model;
