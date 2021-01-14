@@ -37,16 +37,12 @@
 
 - (ZZDownloadModel *)addDownloadModelWithURL:(NSString *)url;
 
-
 - (void)saveDownloadInfo:(ZZDownloadModel *)model;
 
 
 //是否在下载的列表里
 - (BOOL)isInDownloadList:(NSString *)url;
 - (BOOL)isFinishedDownload:(NSString *)url;
-
-//- (ZZDownloadModel *)startDownload:(NSString *)url;
-
 
 
 - (void)deleteDownload:(ZZDownloadModel *)model;

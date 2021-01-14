@@ -42,6 +42,8 @@
 
 @synthesize session = _session;
 
+#pragma mark - Life Cycle
+
 +(ZZDownloadManager *)shareManager{
     static ZZDownloadManager *manager = nil;
     static dispatch_once_t onceToken;
@@ -53,9 +55,12 @@
 
 - (instancetype)init{
     if (self = [super init]) {
+        //下载列表、完成列表、下载Map
         _downloadModelList = @[].mutableCopy;
         _finishedlist = @[].mutableCopy;
         _downloadModelDic = @{}.mutableCopy;
+        
+        //最大并发下载限制
         NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
         NSString * max = [userDefaults valueForKey:@"maxCount"];
         if (max == nil) {
@@ -64,6 +69,7 @@
         }
         [userDefaults synchronize];
         _maxCount = [max intValue];
+        
         [self loadFinishedfiles];
         _downloadModelList = [self loadDownloadList];
         
@@ -116,39 +122,6 @@
     return array;
 }
 
-//- (void)getTempfile:(NSString *)path
-//{
-//    NSDictionary *dic = [NSDictionary dictionaryWithContentsOfFile:path];
-//    if ([dic[@"state"] integerValue] == ZZDownloadModelPauseState) {
-//        if (dic[@"resumedata"]) {
-//            NSData *resumeData = dic[@"resumedata"];
-//
-//            ZZDownloadModel *model = [[ZZDownloadModel alloc] initWithResumeData:resumeData url:dic[@"url"]];
-//            model.progress.totalBytesExpectedToWrite = [dic[@"totalBytesExpectedToWrite"] intValue];
-//            model.progress.totalBytesWritten = [dic[@"totalBytesWritten"] intValue];
-//            model.state = ZZDownloadModelPauseState;
-//            [_downloadModelDic setObject:model forKey:dic[@"url"]];
-//            [_downloadModelList addObject:model];
-//        }
-//    }else{
-//        NSArray *downloadTasks = [self sessionDownloadTasks];
-//        for (NSURLSessionDownloadTask * downloadTask in downloadTasks) {
-//            if (downloadTask.state == NSURLSessionTaskStateCompleted) {
-//
-//                continue;
-//            }
-//            if ([dic[@"url"] isEqualToString:downloadTask.currentRequest.URL.absoluteString]) {
-//                ZZDownloadModel *model = [[ZZDownloadModel alloc] initWithTask:downloadTask];
-//                model.url = dic[@"url"];
-//                model.date = [NSDate date];
-//                model.state = ZZDownloadModelRunningState;
-//                [_downloadModelDic setObject:model forKey:downloadTask.currentRequest.URL.absoluteString];
-//                [_downloadModelList addObject:model];
-//            }
-//        }
-//    }
-//}
-
 - (ZZDownloadModel *)downLoadingModelForURLString:(NSString *)URLString
 {
     return [self.downloadModelDic objectForKey:URLString];
@@ -157,7 +130,7 @@
     return [self.downloadModelDic objectForKey:url];
 }
 
-#pragma mark --get download model
+#pragma mark - get download model
 - (ZZDownloadModel *)downloadModelWithURL:(NSString *)url isInitTask:(BOOL)isInitTask{
     ZZDownloadModel *model = [[ZZDownloadModel alloc] initWithURL:url isInitTask:isInitTask] ;
     return model;
@@ -185,7 +158,7 @@
 }
 
 
-#pragma mark -- NSURLSessionTaskDelegate
+#pragma mark - NSURLSessionTaskDelegate
 - (void)URLSessionDidFinishEventsForBackgroundURLSession:(NSURLSession *)session{
     if (self.completionHandler) {
         self.completionHandler();
@@ -210,12 +183,6 @@ didCompleteWithError:(nullable NSError *)error{
             [model resume];
         }
     }else{//下载完成或下载失败
-        
-//        if (model.state == ZZDownloadModelRunningState || model.state == ZZDownloadModelWillStartState) {
-//            return;
-//        }
-        
-        
         [self.downloadModelList removeObject:model];
         [self.downloadModelDic removeObjectForKey:model.url];
 
@@ -270,8 +237,8 @@ didCompleteWithError:(nullable NSError *)error{
     [self saveFinishedFile];
 }
 
-#pragma mark -- 
-#pragma mark -- NSURLSessionDownloadDelegate
+
+#pragma mark - NSURLSessionDownloadDelegate
 
 /* Sent when a download task that has completed a download.  The delegate should
  * copy or move the file at the given location to a new location as it will be
@@ -338,22 +305,7 @@ expectedTotalBytes:(int64_t)expectedTotalBytes{
     dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
     return tasks;
 }
-//- (nullable NSString *)cachedFileNameForKey:(nullable NSString *)key {
-//
-//    const char *cStr = [key UTF8String];
-//    if (cStr == NULL) {
-//        cStr = "";
-//    }
-//    unsigned char result[CC_MD5_DIGEST_LENGTH];
-//    CC_MD5( cStr, (CC_LONG)strlen(cStr), result );
-//    return [NSString stringWithFormat:
-//            @"%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
-//            result[0], result[1], result[2], result[3],
-//            result[4], result[5], result[6], result[7],
-//            result[8], result[9], result[10], result[11],
-//            result[12], result[13], result[14], result[15]
-//            ];
-//}
+
 
 - (void)pauseDownload:(ZZDownloadModel *)model{
     [model pause];
@@ -398,10 +350,9 @@ expectedTotalBytes:(int64_t)expectedTotalBytes{
     self.downloadingCount++;
 }
 
-#pragma mark -- handle finish file
+#pragma mark - handle finish file
 
-- (void)loadFinishedfiles
-{
+- (void)loadFinishedfiles {
     if ([self.fileManager fileExistsAtPath:self.finishedPlistFilePath]) {
         NSMutableArray *finishArr = [[NSMutableArray alloc] initWithContentsOfFile:[self finishedPlistFilePath]];
         for (NSDictionary *dic in finishArr) {
@@ -474,7 +425,7 @@ expectedTotalBytes:(int64_t)expectedTotalBytes{
     
 }
 
-#pragma mark -- File Manager
+#pragma mark - File Manager
 
 - (NSString *)finishedPlistFilePath{
     if (!_finishedPlistFilePath) {

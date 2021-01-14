@@ -27,6 +27,8 @@
 
 @implementation ListViewController
 
+#pragma mark - Life Cycle
+
 - (void)viewWillAppear:(BOOL)animated{
     [super viewWillAppear:animated];
     _models = @[@"http://dldir1.qq.com/qqfile/QQforMac/QQ_V4.2.4.dmg", @"http://vjs.zencdn.net/v/oceans.mp4", @"http://clips.vorwaerts-gmbh.de/big_buck_bunny.mp4", @"http://mirror.aarnet.edu.au/pub/TED-talks/911Mothers_2010W-480p.mp4", @"http://221.228.226.23/11/t/j/v/b/tjvbwspwhqdmgouolposcsfafpedmb/sh.yinyuetai.com/691201536EE4912BF7E4F1E2C67B8119.mp4", @"http://221.228.226.5/15/t/s/h/v/tshvhsxwkbjlipfohhamjkraxuknsc/sh.yinyuetai.com/88DC015DB03C829C2126EEBBB5A887CB.mp4", @"http://www.live555.com/liveMedia/public/264/tc10.264", @"http://www.live555.com/liveMedia/public/264/slamtv60.264", @"http://www.live555.com/liveMedia/public/264/slamtv10.264"].mutableCopy;
@@ -39,13 +41,10 @@
     self.tableView.estimatedRowHeight=44;
     self.tableView.rowHeight=UITableViewAutomaticDimension;
     self.tableView.tableFooterView = [UIView new];
-    // Uncomment the following line to display an Edit button in the navigation bar for this view controller.
-    // self.navigationItem.rightBarButtonItem = self.editButtonItem;
 }
 
 - (void)didReceiveMemoryWarning {
     [super didReceiveMemoryWarning];
-    // Dispose of any resources that can be recreated.
 }
 
 #pragma mark - Table view data source
@@ -74,7 +73,6 @@
     }else{
         lable2.text = @"还没有下载,点击开始下载";
     }
-    // Configure the cell...
     return cell;
 }
 
@@ -88,7 +86,7 @@
         [a show];
         
     }else{
-//        ZZDownloadModel *downloadModel = [[ZZDownloadManager shareManager] startDownload:url];
+        //ZZDownloadModel *downloadModel = [[ZZDownloadManager shareManager] startDownload:url];
         ZZDownloadModel *downloadModel = [[ZZDownloadManager shareManager] addDownloadModelWithURL:url ];
         if (downloadModel) {
             [tableView reloadData];

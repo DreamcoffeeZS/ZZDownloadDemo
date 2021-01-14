@@ -9,9 +9,6 @@
 #import <Foundation/Foundation.h>
 #import "ZZDownloadModelManager.h"
 
-
-
-
 typedef enum : NSUInteger {
     ZZDownloadModelWillStartState,
     ZZDownloadModelRunningState,
@@ -19,6 +16,7 @@ typedef enum : NSUInteger {
     ZZDownloadModelResumableState,
     ZZDownloadModelCompleteState
 } ZZDownloadModelState;
+
 
 @interface ZZDownloadProgress : NSObject
 // 续传大小
@@ -44,8 +42,6 @@ typedef enum : NSUInteger {
 
 // 下载速度
 @property (nonatomic, copy, readonly) NSString * speedString;
-
-
 
 @end
 
